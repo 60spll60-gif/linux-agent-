@@ -222,7 +222,7 @@
     let hd = historyData[hostname];
     if (!hd || !hd.t || hd.t.length < 2) {
       try {
-        const rows = await fetchJSON(`/api/hosts/${encodeURIComponent(hostname)}?hours=${config.history_hours || 6}`);
+        const rows = await fetchJSON(`/api/hosts/${encodeURIComponent(hostname)}?hours=${Math.max(1, Math.round(config.history_hours || 6))}`);
         if (rows && rows.length) {
           hd = {
             t: rows.map((r) => Math.floor(new Date(r.created_at.replace(" ", "T") + "Z").getTime() / 1000)),

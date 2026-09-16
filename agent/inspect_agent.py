@@ -299,10 +299,11 @@ def collect_logs():
                 })
             break  # 每种类型只取第一个存在的路径
 
+    entries = entries[-200:]  # 先限制上报量，再统计，保证计数与实际入库数据一致
     result["total_collected"] = len(entries)
     result["error_count"] = sum(1 for e in entries if e["level"] in ("ERROR", "CRITICAL", "EMERGENCY", "ALERT"))
     result["warn_count"] = sum(1 for e in entries if e["level"] == "WARN")
-    result["entries"] = entries[-200:]  # 限制上报量
+    result["entries"] = entries
     return result
 
 # ── 主逻辑 ────────────────────────────────────────────

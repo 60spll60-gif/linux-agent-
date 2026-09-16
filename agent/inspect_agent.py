@@ -246,6 +246,65 @@ def collect_hardware():
 
     return result
 
+# ── 日志采集（整合 ELK Filebeat 能力）──────────────────
+
+LOG_PATHS = {
+    "system": ["/var/log/syslog", "/var/log/messages"],
+    "auth":   ["/var/log/auth.log", "/var/log/secure"],
+    "nginx_access": ["/var/log/nginx/access.log"],
+    "nginx_error":  ["/var/log/nginx/error.log"],
+}
+LOG_TAIL_LINES = int(os.environ.get("INSPECT_LOG_LINES", "50"))
+
+
+def _tail_file(path, n=50):
+    """读取文件末尾 n 行，失败返回空列表"""
+    try:
+        r = subprocess.run(["tail", "-n", str(n), path],
+                           capture_output=True, text=True, timeout=5)
+        return [l for l in r.stdout.strip().split('\n') if l]
+    except Exception:
+        return []
+
+
+def _parse_log_level(line):
+    """从日志行中提取级别，未匹配返回 INFO"""
+    low = line.lower()
+    for lvl in ("emergency", "alert", "critical", "error", "warn", "notice", "info", "debug"):
+        if lvl in low:
+            return lvl.upper()
+    return "INFO"
+
+
+def collect_logs():
+    """采集系统/认证/Nginx日志，自动解析级别"""
+    result = {
+        "total_collected": 0,
+        "error_count": 0,
+        "warn_count": 0,
+        "entries": [],
+    }
+    entries = []
+    for log_type, paths in LOG_PATHS.items():
+        for path in paths:
+            if not os.path.exists(path):
+                continue
+            lines = _tail_file(path, LOG_TAIL_LINES)
+            for line in lines:
+                entries.append({
+                    "type": log_type,
+                    "source": path,
+                    "level": _parse_log_level(line),
+                    "message": line[:1024],
+                })
+            break  # 每种类型只取第一个存在的路径
+
+    result["total_collected"] = len(entries)
+    result["error_count"] = sum(1 for e in entries if e["level"] in ("ERROR", "CRITICAL", "EMERGENCY", "ALERT"))
+    result["warn_count"] = sum(1 for e in entries if e["level"] == "WARN")
+    result["entries"] = entries[-200:]  # 限制上报量
+    return result
+
 # ── 主逻辑 ────────────────────────────────────────────
 
 def run_once():
@@ -257,6 +316,7 @@ def run_once():
         "services": collect_services(),
         "security": collect_security(),
         "hardware": collect_hardware(),
+        "logs": collect_logs(),
     }
     data = json.dumps(payload).encode()
     headers = {"Content-Type": "application/json"}

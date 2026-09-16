@@ -146,6 +146,18 @@ class HardwareInfo(BaseModel):
     smart_health: str
     raid_status: str
 
+class LogEntry(BaseModel):
+    type: str
+    source: str
+    level: str
+    message: str
+
+class LogData(BaseModel):
+    total_collected: int = 0
+    error_count: int = 0
+    warn_count: int = 0
+    entries: list[LogEntry] = []
+
 class Report(BaseModel):
     hostname: str
     timestamp: str
@@ -153,6 +165,7 @@ class Report(BaseModel):
     services: ServiceInfo
     security: SecurityInfo
     hardware: HardwareInfo
+    logs: LogData | None = None
 
 # ── 数据库 ────────────────────────────────────────────
 
@@ -186,6 +199,20 @@ def init_db():
             );
             CREATE INDEX IF NOT EXISTS idx_hostname ON reports(hostname);
             CREATE INDEX IF NOT EXISTS idx_created ON reports(created_at);
+
+            CREATE TABLE IF NOT EXISTS logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                hostname TEXT NOT NULL,
+                timestamp TEXT NOT NULL,
+                log_type TEXT NOT NULL,
+                source TEXT,
+                level TEXT,
+                message TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_logs_hostname ON logs(hostname);
+            CREATE INDEX IF NOT EXISTS idx_logs_level ON logs(level);
+            CREATE INDEX IF NOT EXISTS idx_logs_created ON logs(created_at);
         """)
         db.commit()
         db.close()
@@ -217,6 +244,12 @@ def save_report(report: Report):
             report.hardware.smart_health,
             json.dumps(report.model_dump(), ensure_ascii=False),
         ))
+        if report.logs and report.logs.entries:
+            for entry in report.logs.entries:
+                db.execute("""
+                    INSERT INTO logs (hostname, timestamp, log_type, source, level, message)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                """, (report.hostname, report.timestamp, entry.type, entry.source, entry.level, entry.message))
         db.commit()
         db.close()
 
@@ -298,6 +331,72 @@ def get_all_history(hours: float, max_points: int = 120) -> dict:
         if t:
             out[host] = {"t": t, "cpu": cpu, "mem": mem, "disk": disk}
     return out
+
+# ── 日志查询 ──────────────────────────────────────────
+
+def query_logs(hostname: str = None, level: str = None, keyword: str = None,
+               log_type: str = None, hours: int = 24, limit: int = 200):
+    """多条件组合查询日志"""
+    since = (datetime.now(timezone.utc) - timedelta(hours=hours)).strftime("%Y-%m-%d %H:%M:%S")
+    conditions = ["created_at > ?"]
+    params: list = [since]
+    if hostname:
+        conditions.append("hostname = ?")
+        params.append(hostname)
+    if level:
+        conditions.append("level = ?")
+        params.append(level.upper())
+    if log_type:
+        conditions.append("log_type = ?")
+        params.append(log_type)
+    if keyword:
+        conditions.append("message LIKE ?")
+        params.append(f"%{keyword}%")
+    where = " AND ".join(conditions)
+    db = get_db()
+    rows = db.execute(
+        f"SELECT * FROM logs WHERE {where} ORDER BY created_at DESC LIMIT ?",
+        params + [limit]
+    ).fetchall()
+    db.close()
+    return [dict(r) for r in rows]
+
+
+def get_log_stats(hours: int = 24):
+    """日志统计：按级别/类型/主机分组"""
+    since = (datetime.now(timezone.utc) - timedelta(hours=hours)).strftime("%Y-%m-%d %H:%M:%S")
+    db = get_db()
+    by_level = db.execute(
+        "SELECT level, COUNT(*) as cnt FROM logs WHERE created_at > ? GROUP BY level",
+        (since,)
+    ).fetchall()
+    by_type = db.execute(
+        "SELECT log_type, COUNT(*) as cnt FROM logs WHERE created_at > ? GROUP BY log_type",
+        (since,)
+    ).fetchall()
+    by_host = db.execute(
+        "SELECT hostname, COUNT(*) as total, "
+        "SUM(CASE WHEN level IN ('ERROR','CRITICAL','EMERGENCY','ALERT') THEN 1 ELSE 0 END) as errors "
+        "FROM logs WHERE created_at > ? GROUP BY hostname",
+        (since,)
+    ).fetchall()
+    db.close()
+    return {
+        "by_level": {r["level"]: r["cnt"] for r in by_level},
+        "by_type": {r["log_type"]: r["cnt"] for r in by_type},
+        "by_host": [dict(r) for r in by_host],
+    }
+
+
+def cleanup_old_logs():
+    """清理过期日志，与巡检记录保留策略一致"""
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=RETENTION_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
+    with _db_lock:
+        db = get_db()
+        n = db.execute("DELETE FROM logs WHERE created_at < ?", (cutoff,)).rowcount
+        db.commit()
+        db.close()
+    return n
 
 # ── 状态判定 ──────────────────────────────────────────
 # 判定逻辑只在这里写一份，/api/hosts、/api/summary、看板全部复用。
@@ -396,7 +495,8 @@ def _daily_cleanup():
         _time.sleep(24 * 3600)
         try:
             n = cleanup_old_reports()
-            print(f"[cleanup] 清理 {n} 条过期记录")
+            nl = cleanup_old_logs()
+            print(f"[cleanup] 清理 {n} 条巡检记录 + {nl} 条日志")
         except Exception as e:
             print(f"[cleanup] 失败: {e}")
 
@@ -405,6 +505,7 @@ async def lifespan(app: FastAPI):
     """启动时建表 + 清理一次，并启动每日清理线程"""
     init_db()
     cleanup_old_reports()
+    cleanup_old_logs()
     threading.Thread(target=_daily_cleanup, daemon=True).start()
     yield
 
@@ -522,6 +623,29 @@ def api_host_detail(hostname: str, hours: int = 24):
     if not rows:
         raise HTTPException(status_code=404, detail=f"没有 {hostname} 的历史数据")
     return rows
+
+# ── 日志 API ──────────────────────────────────────────
+
+@app.get("/api/logs", dependencies=[Depends(require_dashboard)])
+def api_logs(hostname: str = None, level: str = None, keyword: str = None,
+             log_type: str = None, hours: int = 24, limit: int = 200):
+    """日志查询，支持多条件组合过滤"""
+    return query_logs(hostname, level, keyword, log_type,
+                      hours=min(max(hours, 1), 24 * RETENTION_DAYS),
+                      limit=min(max(limit, 1), 1000))
+
+@app.get("/api/logs/stats", dependencies=[Depends(require_dashboard)])
+def api_log_stats(hours: int = 24):
+    """日志统计：按级别/类型/主机分组"""
+    return get_log_stats(hours=min(max(hours, 1), 24 * RETENTION_DAYS))
+
+@app.get("/logs", include_in_schema=False, dependencies=[Depends(require_dashboard)])
+def logs_page():
+    """日志分析看板入口"""
+    logs_html = STATIC_DIR / "logs.html"
+    if not logs_html.exists():
+        raise HTTPException(status_code=500, detail="static/logs.html 缺失")
+    return FileResponse(logs_html)
 
 # ── 终端表格输出 ──────────────────────────────────────
 

@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>日志分析 - Linux 运维平台</title>
+<link rel="stylesheet" href="/static/app.css">
+<style>
+/* ── 日志页专属样式（复用 app.css 主题变量）── */
+.logs-header { display: flex; align-items: center; gap: 16px; padding: 16px 24px; border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 100; background: var(--bg); }
+.logs-header h1 { font-size: 1.25rem; font-weight: 600; }
+.logs-nav { display: flex; gap: 8px; margin-left: auto; }
+.logs-nav a { padding: 6px 14px; border-radius: 6px; text-decoration: none; color: var(--text-dim); background: var(--bg-card); border: 1px solid var(--border); font-size: .82rem; transition: all .15s; }
+.logs-nav a.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+.logs-nav a:hover:not(.active) { background: var(--border); }
+
+.logs-content { padding: 24px; max-width: 1400px; margin: 0 auto; }
+
+/* 统计卡片 */
+.stat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; margin-bottom: 24px; }
+.stat-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 16px; text-align: center; box-shadow: var(--shadow); }
+.stat-card .num { font-size: 1.8rem; font-weight: 700; color: var(--text); }
+.stat-card .lbl { font-size: .75rem; color: var(--text-dim); margin-top: 4px; }
+.stat-card.err .num { color: var(--err); }
+.stat-card.warn .num { color: var(--warn); }
+
+/* 搜索栏 */
+.search-bar { display: flex; gap: 8px; margin-bottom: 20px; flex-wrap: wrap; align-items: center; }
+.search-bar input, .search-bar select { background: var(--bg-card); border: 1px solid var(--border); color: var(--text); padding: 8px 12px; border-radius: 6px; font-size: .82rem; }
+.search-bar input { flex: 1; min-width: 200px; }
+.search-bar button { background: var(--accent); color: #fff; border: none; padding: 8px 18px; border-radius: 6px; cursor: pointer; font-size: .82rem; font-weight: 500; }
+.search-bar button:hover { opacity: .9; }
+
+/* 日志表格 */
+.log-table-wrap { overflow-x: auto; background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--shadow); }
+table.log-table { width: 100%; border-collapse: collapse; font-size: .82rem; }
+.log-table th { text-align: left; padding: 10px 12px; border-bottom: 2px solid var(--border); color: var(--text-dim); font-weight: 600; white-space: nowrap; position: sticky; top: 0; background: var(--bg-card); }
+.log-table td { padding: 8px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+.log-table tr:hover td { background: var(--bg); }
+.log-table .msg-cell { max-width: 600px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: help; }
+.lvl-ERROR, .lvl-CRITICAL, .lvl-EMERGENCY, .lvl-ALERT { color: var(--err); font-weight: 600; }
+.lvl-WARN { color: var(--warn); font-weight: 500; }
+.lvl-INFO, .lvl-NOTICE, .lvl-DEBUG { color: var(--text-dim); }
+
+.empty-logs { text-align: center; padding: 60px 20px; color: var(--text-dim); }
+.empty-logs h3 { margin-bottom: 8px; }
+
+@media (max-width: 768px) {
+  .logs-header { flex-wrap: wrap; padding: 12px 16px; }
+  .logs-content { padding: 16px; }
+  .stat-grid { grid-template-columns: repeat(2, 1fr); }
+}
+</style>
+</head>
+<body>
+<div class="logs-header">
+  <h1>日志分析</h1>
+  <div class="logs-nav">
+    <a href="/">巡检看板</a>
+    <a href="/logs" class="active">日志分析</a>
+  </div>
+</div>
+
+<div class="logs-content">
+  <div class="stat-grid" id="stat-grid"></div>
+
+  <form class="search-bar" id="search-form">
+    <input type="text" id="f-keyword" placeholder="关键词搜索...">
+    <select id="f-level">
+      <option value="">全部级别</option>
+      <option value="ERROR">ERROR</option>
+      <option value="WARN">WARN</option>
+      <option value="CRITICAL">CRITICAL</option>
+      <option value="INFO">INFO</option>
+      <option value="DEBUG">DEBUG</option>
+    </select>
+    <select id="f-type">
+      <option value="">全部类型</option>
+    </select>
+    <select id="f-hours">
+      <option value="1">1 小时</option>
+      <option value="6">6 小时</option>
+      <option value="24" selected>24 小时</option>
+      <option value="168">7 天</option>
+    </select>
+    <button type="submit">查询</button>
+  </form>
+
+  <div class="log-table-wrap">
+    <table class="log-table">
+      <thead><tr><th>时间</th><th>主机</th><th>类型</th><th>级别</th><th>消息</th></tr></thead>
+      <tbody id="log-tbody"></tbody>
+    </table>
+  </div>
+  <div id="empty-state" class="empty-logs" style="display:none"><h3>暂无日志数据</h3><p>确认 Agent 已启动并成功上报</p></div>
+</div>
+
+<script>
+(function() {
+  "use strict";
+
+  const $stats = document.getElementById("stat-grid");
+  const $tbody = document.getElementById("log-tbody");
+  const $empty = document.getElementById("empty-state");
+  const $form = document.getElementById("search-form");
+  const $typeSelect = document.getElementById("f-type");
+
+  let logTypes = [];
+
+  async function fetchJSON(url) {
+    const r = await fetch(url, { credentials: "same-origin" });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    return r.json();
+  }
+
+  function esc(s) { const d = document.createElement("div"); d.textContent = s; return d.innerHTML; }
+
+  async function loadStats(hours) {
+    try {
+      const s = await fetchJSON(`/api/logs/stats?hours=${hours}`);
+      const total = Object.values(s.by_level).reduce((a, b) => a + b, 0);
+      const errors = (s.by_level.ERROR || 0) + (s.by_level.CRITICAL || 0) + (s.by_level.EMERGENCY || 0) + (s.by_level.ALERT || 0);
+      const warns = s.by_level.WARN || 0;
+      const hosts = (s.by_host || []).length;
+
+      $stats.innerHTML = [
+        { n: total, l: "总日志条数", c: "" },
+        { n: errors, l: "ERROR / CRITICAL", c: "err" },
+        { n: warns, l: "WARN", c: "warn" },
+        { n: hosts, l: "上报主机数", c: "" },
+      ].map(x => `<div class="stat-card ${x.c}"><div class="num">${x.n}</div><div class="lbl">${x.l}</div></div>`).join("");
+
+      // 填充类型下拉
+      const types = Object.keys(s.by_type || {});
+      if (types.length && !logTypes.length) {
+        logTypes = types;
+        types.forEach(t => {
+          const o = document.createElement("option");
+          o.value = t; o.textContent = t;
+          $typeSelect.appendChild(o);
+        });
+      }
+    } catch (e) { console.error("stats:", e); }
+  }
+
+  async function loadLogs(params) {
+    const qs = new URLSearchParams(params).toString();
+    try {
+      const logs = await fetchJSON(`/api/logs?${qs}`);
+      if (!logs.length) {
+        $tbody.innerHTML = "";
+        $empty.style.display = "";
+        return;
+      }
+      $empty.style.display = "none";
+      $tbody.innerHTML = logs.map(l => `<tr>
+        <td>${esc(l.created_at || "")}</td>
+        <td>${esc(l.hostname || "")}</td>
+        <td>${esc(l.log_type || "")}</td>
+        <td class="lvl-${esc(l.level || "INFO")}">${esc(l.level || "")}</td>
+        <td class="msg-cell" title="${esc((l.message || "").replace(/"/g, '&quot;'))}">${esc((l.message || "").substring(0, 150))}</td>
+      </tr>`).join("");
+    } catch (e) { console.error("logs:", e); }
+  }
+
+  function getParams() {
+    return {
+      keyword: document.getElementById("f-keyword").value || "",
+      level: document.getElementById("f-level").value || "",
+      log_type: document.getElementById("f-type").value || "",
+      hours: document.getElementById("f-hours").value || "24",
+      limit: "200",
+    };
+  }
+
+  async function refresh() {
+    const p = getParams();
+    await Promise.all([loadStats(p.hours), loadLogs(p)]);
+  }
+
+  $form.addEventListener("submit", (e) => { e.preventDefault(); refresh(); });
+
+  // 从 URL 恢复参数
+  const urlP = new URLSearchParams(location.search);
+  if (urlP.get("keyword")) document.getElementById("f-keyword").value = urlP.get("keyword");
+  if (urlP.get("level")) document.getElementById("f-level").value = urlP.get("level");
+  if (urlP.get("hours")) document.getElementById("f-hours").value = urlP.get("hours");
+
+  refresh();
+})();
+</script>
+</body>
+</html>

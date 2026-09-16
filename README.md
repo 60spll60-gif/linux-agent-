@@ -1,17 +1,18 @@
-# Linux 自动巡检项目
+# Linux 智能运维巡检平台
 
-每台 Linux 机器跑一个 Agent，采集系统资源/服务状态/安全审计/硬件健康，上报到中央服务器。
+自研 Agent-Server 架构，每台 Linux 部署轻量 Agent 采集系统资源/服务状态/安全审计/硬件健康及日志数据，上报到中央服务器统一存储、分析与可视化。
 
 ## 目录结构
 
 ```
 linux-inspect-agent/
 ├── agent/                  # 每台目标机器部署
-│   ├── inspect_agent.py    # 采集脚本
+│   ├── inspect_agent.py    # 采集脚本（巡检 + 日志）
 │   └── config.yaml         # 配置
 ├── server/                 # 中央服务器
-│   ├── server.py           # FastAPI 服务 + 看板
-│   └── config.yaml         # 配置
+│   ├── server.py           # FastAPI 服务 + 巡检看板 + 日志分析
+│   ├── config.yaml         # 配置
+│   └── static/             # 前端（巡检看板 + 日志分析页面）
 ├── deploy/                 # 生产部署（systemd/Nginx/一键脚本）
 │   ├── DEPLOY.md           # ★ 上线部署手册
 │   ├── setup-server.sh     # 服务器端一键初始化
@@ -78,6 +79,7 @@ python server.py --cli
 | `INSPECT_TOKEN` | 空 | Agent 上报鉴权 Token（生产必设） |
 | `INSPECT_DASHBOARD_USER` | 空 | 看板/API Basic Auth 用户名（生产必设） |
 | `INSPECT_DASHBOARD_PASS` | 空 | 看板/API Basic Auth 密码（生产必设） |
+| `INSPECT_LOG_LINES` | `50` | Agent 每个日志文件采集行数 |
 
 ## 采集内容
 
@@ -87,12 +89,16 @@ python server.py --cli
 | **服务状态** | systemd 服务（运行/失败/停止）、进程数、监听端口 |
 | **安全审计** | 最近登录、sudo 记录、SSH 配置问题、iptables 规则数 |
 | **硬件健康** | CPU 温度、SMART 健康状态、RAID 状态 |
+| **日志采集** | 系统日志、认证日志、Nginx 访问/错误日志，自动解析级别 |
 
 ## API 接口
 
 | 接口 | 说明 |
 |------|------|
-| `POST /report` | Agent 上报巡检数据 |
-| `GET /` | HTML 看板 |
+| `POST /report` | Agent 上报巡检 + 日志数据 |
+| `GET /` | 巡检看板（HTML） |
+| `GET /logs` | 日志分析看板（HTML，支持搜索/过滤） |
 | `GET /api/hosts` | 各主机最新状态 JSON |
 | `GET /api/hosts/{hostname}` | 单台主机历史数据 JSON |
+| `GET /api/logs` | 日志查询（支持 hostname/level/keyword/log_type/hours/limit） |
+| `GET /api/logs/stats` | 日志统计（按级别/类型/主机分组） |

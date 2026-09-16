@@ -12,3 +12,8 @@ interval: 300
 
 # 主机标识（留空则用机器 hostname）
 hostname: ""
+
+# 日志采集配置
+logs:
+  # 每个日志文件采集行数（也可用环境变量 INSPECT_LOG_LINES 覆盖）
+  tail_lines: 50

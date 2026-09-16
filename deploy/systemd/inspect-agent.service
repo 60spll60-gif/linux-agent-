@@ -1,0 +1,24 @@
+# Linux 巡检 Agent — systemd 服务（常驻循环模式，每 interval 秒采集上报一次）
+# 安装位置: /etc/systemd/system/inspect-agent.service
+[Unit]
+Description=Linux 巡检 Agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# 注意：采集 iptables / smartctl / sensors / RAID 需要 root 权限，
+# 若想降权运行，可改用普通用户 + 给相应命令配置 sudo NOPASSWD
+User=root
+WorkingDirectory=/opt/inspect-agent/agent
+# 服务器地址和 Token 走环境变量文件（chmod 600）
+EnvironmentFile=/etc/inspect-agent/agent.env
+ExecStart=/usr/bin/python3 /opt/inspect-agent/agent/inspect_agent.py
+Restart=always
+RestartSec=30
+# 日志进 journald，可用 journalctl -u inspect-agent 查看
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

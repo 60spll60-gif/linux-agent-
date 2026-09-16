@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Linux 巡检看板</title>
+<link rel="stylesheet" href="/static/vendor/uPlot.min.css">
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<header class="header">
+  <div class="header-left">
+    <h1 class="header-title">Linux 巡检看板</h1>
+    <span id="server-time" class="server-time"></span>
+  </div>
+  <div class="header-right">
+    <div class="summary-bar" id="summary-bar"></div>
+    <div class="controls">
+      <select id="filter-status" class="control-select">
+        <option value="all">全部状态</option>
+        <option value="err">严重</option>
+        <option value="offline">离线</option>
+        <option value="warn">警告</option>
+        <option value="ok">正常</option>
+      </select>
+      <select id="sort-by" class="control-select">
+        <option value="status">按状态排序</option>
+        <option value="hostname">按主机名</option>
+        <option value="cpu">按 CPU</option>
+        <option value="memory">按内存</option>
+        <option value="disk">按磁盘</option>
+      </select>
+      <button id="theme-toggle" class="btn-icon" title="切换主题">◑</button>
+      <button id="refresh-btn" class="btn-icon" title="立即刷新">↻</button>
+    </div>
+  </div>
+</header>
+
+<main class="grid" id="host-grid"></main>
+
+<div class="modal-overlay" id="modal-overlay">
+  <div class="modal" id="modal">
+    <button class="modal-close" id="modal-close">×</button>
+    <div class="modal-header">
+      <h2 id="modal-hostname"></h2>
+      <span id="modal-status-badge" class="badge"></span>
+    </div>
+    <div class="modal-body">
+      <div class="detail-section">
+        <h3>资源趋势</h3>
+        <div class="chart-row">
+          <div class="chart-container"><div id="chart-cpu" class="chart"></div><span class="chart-label">CPU %</span></div>
+          <div class="chart-container"><div id="chart-mem" class="chart"></div><span class="chart-label">内存 %</span></div>
+          <div class="chart-container"><div id="chart-disk" class="chart"></div><span class="chart-label">磁盘 %</span></div>
+        </div>
+      </div>
+      <div class="detail-section">
+        <h3>当前指标</h3>
+        <div class="detail-grid" id="detail-metrics"></div>
+      </div>
+      <div class="detail-section">
+        <h3>告警原因</h3>
+        <ul id="detail-reasons" class="reason-list"></ul>
+      </div>
+      <div class="detail-section">
+        <h3>SSH 安全问题</h3>
+        <ul id="detail-ssh" class="reason-list"></ul>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="/static/vendor/uPlot.iife.min.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>

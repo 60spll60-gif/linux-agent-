@@ -1,0 +1,29 @@
+# Linux 巡检中央服务器 — systemd 服务
+# 安装位置: /etc/systemd/system/inspect-server.service
+[Unit]
+Description=Linux 巡检中央服务器 (FastAPI)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# 专用低权限用户运行，不要用 root
+User=inspect
+Group=inspect
+WorkingDirectory=/opt/linux-inspect-agent/server
+# 密钥全部走环境变量文件（chmod 600，属主 inspect），不进代码仓库
+EnvironmentFile=/etc/inspect-server/inspect.env
+ExecStart=/opt/linux-inspect-agent/venv/bin/python server.py
+Restart=always
+RestartSec=5
+
+# ── 安全加固 ──
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+# 数据库目录需要可写
+ReadWritePaths=/var/lib/inspect-server
+
+[Install]
+WantedBy=multi-user.target

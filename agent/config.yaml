@@ -1,0 +1,14 @@
+# Agent 配置（每台 Linux 修改这个）
+# 生产环境建议：用环境变量注入（INSPECT_SERVER / INSPECT_TOKEN），
+# systemd 部署时由 /etc/inspect-agent/agent.env 提供，见 deploy/DEPLOY.md
+server:
+  # 中央服务器地址，改成你的域名（走 HTTPS）
+  url: "http://127.0.0.1:8000"
+  # 必须与服务器端 token 一致
+  token: ""
+
+# 采集间隔（秒），默认 300 秒 = 5 分钟
+interval: 300
+
+# 主机标识（留空则用机器 hostname）
+hostname: ""

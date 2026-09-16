@@ -33,15 +33,16 @@ linux-inspect-agent/
 pip install -r requirements.txt
 ```
 
-> Agent 只需 psutil，Server 需要全部。
+> Agent 需要 psutil + pyyaml，Server 需要全部。
 
 ### 2. 启动中央服务器
 
 ```bash
 cd server
 python server.py
-# 默认监听 127.0.0.1:8000（生产由 Nginx 反代对外提供 HTTPS）
-# 本机调试：浏览器打开 http://127.0.0.1:8000 查看看板
+# 默认监听 0.0.0.0:8000（本机调试建议设 INSPECT_HOST=127.0.0.1；
+# 生产由 Nginx 反代对外提供 HTTPS，此时服务器只监听 127.0.0.1）
+# 浏览器打开 http://127.0.0.1:8000 查看看板
 ```
 
 ### 3. 在每台 Linux 上跑 Agent
@@ -73,13 +74,14 @@ python server.py --cli
 |------|--------|------|
 | `INSPECT_SERVER` | `http://127.0.0.1:8000` | Agent 上报地址 |
 | `INSPECT_INTERVAL` | `300` | Agent 采集间隔（秒） |
-| `INSPECT_HOST` | `127.0.0.1` | 服务器监听地址 |
+| `INSPECT_HOST` | `0.0.0.0` | 服务器监听地址 |
 | `INSPECT_PORT` | `8000` | 服务器监听端口 |
 | `INSPECT_DB` | `inspect.db` | SQLite 数据库路径 |
 | `INSPECT_TOKEN` | 空 | Agent 上报鉴权 Token（生产必设） |
 | `INSPECT_DASHBOARD_USER` | 空 | 看板/API Basic Auth 用户名（生产必设） |
 | `INSPECT_DASHBOARD_PASS` | 空 | 看板/API Basic Auth 密码（生产必设） |
 | `INSPECT_LOG_LINES` | `50` | Agent 每个日志文件采集行数 |
+| `INSPECT_LOG_RETENTION_DAYS` | `7` | 日志保留天数（独立于巡检记录的保留期） |
 
 ## 采集内容
 

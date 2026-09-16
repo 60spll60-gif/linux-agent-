@@ -24,11 +24,17 @@ def load_config():
         with cfg_path.open(encoding="utf-8") as f:
             cfg = yaml.safe_load(f) or {}
     server = cfg.get("server") or {}
+    try:
+        log_retention = int(os.environ.get("INSPECT_LOG_RETENTION_DAYS")
+                            or cfg.get("log_retention_days", 7))
+    except (TypeError, ValueError):
+        log_retention = 7
     return {
         "host": os.environ.get("INSPECT_HOST") or server.get("host", "0.0.0.0"),
         "port": int(os.environ.get("INSPECT_PORT") or server.get("port", 8000)),
         "db_path": os.environ.get("INSPECT_DB") or cfg.get("db_path", "inspect.db"),
         "retention_days": int(cfg.get("data_retention_days", 30)),
+        "log_retention_days": log_retention,
         "token": os.environ.get("INSPECT_TOKEN") or server.get("token") or "",
         # 看板 HTTP Basic 账号。留空＝不启用鉴权（只适合本机调试）
         "dashboard_user": os.environ.get("INSPECT_DASHBOARD_USER") or server.get("dashboard_user") or "",
@@ -77,6 +83,7 @@ DB_PATH = CFG["db_path"]
 PORT = CFG["port"]
 HOST = CFG["host"]
 RETENTION_DAYS = CFG["retention_days"]
+LOG_RETENTION_DAYS = CFG["log_retention_days"]
 TOKEN = CFG["token"]
 DASH = CFG["dashboard"]
 STATIC_DIR = Path(__file__).with_name("static")
@@ -389,8 +396,8 @@ def get_log_stats(hours: int = 24):
 
 
 def cleanup_old_logs():
-    """清理过期日志，与巡检记录保留策略一致"""
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=RETENTION_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
+    """清理过期日志。日志量比巡检记录大一个数量级，保留期更短"""
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=LOG_RETENTION_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
     with _db_lock:
         db = get_db()
         n = db.execute("DELETE FROM logs WHERE created_at < ?", (cutoff,)).rowcount
